@@ -1,10 +1,10 @@
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyAw9dkax6UMTpBF-ErxFsjLL9z8q7UNaPw",
-  authDomain: "digital-kamar.firebaseapp.com",
-  projectId: "digital-kamar",
-  storageBucket: "digital-kamar.firebasestorage.app",
-  messagingSenderId: "80678990857",
-  appId: "1:80678990857:web:c812fb2efb382fc59134d8",
-  measurementId: "G-K8NYS4BG61"
-};
+{
+  "projectId": "symbolic-seeker-84jp1",
+  "appId": "1:650925107890:web:d7599764efea87680637ab",
+  "apiKey": "AIzaSyC-PgL1KU3gN4ioKSsFTUP849YYazGM0_k",
+  "authDomain": "symbolic-seeker-84jp1.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-ee547f30-1dd6-433a-b04c-737af7e99c3d",
+  "storageBucket": "symbolic-seeker-84jp1.firebasestorage.app",
+  "messagingSenderId": "650925107890",
+  "measurementId": ""
+}
