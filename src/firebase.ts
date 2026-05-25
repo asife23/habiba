@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getDocs, getDocsFromCache, Query, DocumentData, QuerySnapshot, setLogLevel } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import { firebaseConfig } from './firebaseConfig';
 
 // Suppress verbose SDK warnings like transport errors in the sandbox iframe environment
 try {
