@@ -1,0 +1,116 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getStorage } from 'firebase/storage';
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getDocs, getDocsFromCache, Query, DocumentData, QuerySnapshot, setLogLevel } from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
+
+// Suppress verbose SDK warnings like transport errors in the sandbox iframe environment
+try {
+  setLogLevel('error');
+} catch (e) {
+  console.warn("Could not set log level:", e);
+}
+
+export const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+
+// Bulletproof database initialization that handles sandboxed iframe environments where IndexedDB might be disabled.
+// We DO NOT force experimentalForceLongPolling by default, because HTTP chunked long polling responses can be buffered 
+// by reverse proxies (like Nginx) leading to a 10-second connection timeout. Instead, we use standard connections 
+// (which utilize fast, unbuffered WebSockets), and fall back if needed.
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})
+  }, firebaseConfig.firestoreDatabaseId);
+} catch (error) {
+  console.warn("Firestore persistent cache initialization failed, trying with fallback config:", error);
+  try {
+    dbInstance = initializeFirestore(app, {
+      experimentalForceLongPolling: true
+    }, firebaseConfig.firestoreDatabaseId);
+  } catch (fallbackError) {
+    console.error("Firestore initialization fallback failed:", fallbackError);
+    dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = dbInstance;
+export const storage = getStorage(app);
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo, null, 2));
+}
+
+// Helper to prevent UI freezing on weak connections or offline state
+export async function offlineSafeDocWrite<T>(promise: Promise<T>): Promise<T | void> {
+  // Always catch the promise to prevent unhandled rejections if it fails in the background
+  promise.catch(e => console.error("Offline/Background write failed:", e));
+  
+  if (!navigator.onLine) {
+    // Wait briefly to allow Firestore's internal mechanisms to update the local cache
+    // before the caller invokes data fetching again.
+    return new Promise(resolve => setTimeout(resolve, 300));
+  }
+  // Race against a 1.5 second timeout. If connection is slow or drops, we don't freeze the UI.
+  return Promise.race([
+    promise,
+    new Promise<void>(resolve => setTimeout(resolve, 1500))
+  ]);
+}
+
+// Helper to quickly fetch data from cache if network is slow/offline
+export async function fastGetDocs(q: Query<DocumentData, DocumentData>): Promise<QuerySnapshot<DocumentData, DocumentData>> {
+  if (!navigator.onLine) {
+    try {
+      return await getDocsFromCache(q);
+    } catch (e) {
+      return await getDocs(q); // fallback
+    }
+  }
+  
+  try {
+    return await Promise.race([
+      getDocs(q),
+      new Promise<QuerySnapshot<DocumentData, DocumentData>>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
+    ]);
+  } catch (error) {
+    try {
+      return await getDocsFromCache(q);
+    } catch {
+      return await getDocs(q);
+    }
+  }
+}
