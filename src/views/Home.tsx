@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, doc, onSnapshot } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, fastGetDocs } from '../firebase';
+import { collection, query, where, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, fastGetDocs, offlineSafeDocWrite } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { 
@@ -44,6 +44,9 @@ export default function Home() {
   
   // Selected Farm Type State: 'poultry' (পোল্ট্রি), 'cattle' (পশুপালন/গরু), 'fish' (মৎস্য/মাছ)
   const [selectedType, setSelectedType] = useState<'poultry' | 'cattle' | 'fish'>('poultry');
+  
+  // Tab select state for different dashboard content panels to prevent vertical scrolling
+  const [activeHomeTab, setActiveHomeTab] = useState<'tasks' | 'batch' | 'calculator'>('tasks');
   
   // Chores Checklist State
   const [chores, setChores] = useState<Chores[]>([]);
@@ -182,10 +185,10 @@ export default function Home() {
     return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
   };
 
-  // Load and initialize chores based on date and selected farm type
+  // Load and initialize chores based on date and selected farm type with Firestore sync
   useEffect(() => {
     const todayStr = getTodayDateString();
-    const savedChores = localStorage.getItem(`farm_chores_${selectedType}_${todayStr}`);
+    const cacheKey = `farm_chores_${selectedType}_${todayStr}`;
     
     // Customized Default Chores for each farm category
     const defaultChoresMap = {
@@ -214,6 +217,8 @@ export default function Home() {
 
     const targetDefault = defaultChoresMap[selectedType] || defaultChoresMap.poultry;
 
+    // First load from localStorage for instant offline access
+    const savedChores = localStorage.getItem(cacheKey);
     if (savedChores) {
       try {
         setChores(JSON.parse(savedChores));
@@ -222,15 +227,66 @@ export default function Home() {
       }
     } else {
       setChores(targetDefault);
-      localStorage.setItem(`farm_chores_${selectedType}_${todayStr}`, JSON.stringify(targetDefault));
     }
-  }, [selectedType]);
 
-  const toggleChore = (id: string) => {
-    const updated = chores.map(c => c.id === id ? { ...c, completed: !c.completed } : c);
-    setChores(updated);
+    if (!currentUser) return;
+
+    // Now set up Firestore synchronization wrapper
+    const docId = `${currentUser.uid}_${selectedType}_${todayStr}`;
+    const choreDocRef = doc(db, 'chores', docId);
+
+    const unsub = onSnapshot(choreDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data && Array.isArray(data.list)) {
+          setChores(data.list);
+          localStorage.setItem(cacheKey, JSON.stringify(data.list));
+        }
+      } else {
+        // If it doesn't exist yet, we initialize it on the database
+        const localData = savedChores ? JSON.parse(savedChores) : targetDefault;
+        setDoc(choreDocRef, {
+          userId: currentUser.uid,
+          date: todayStr,
+          farmType: selectedType,
+          list: localData,
+          updatedAt: new Date().toISOString()
+        }).catch(err => {
+          console.warn("Could not save initial chores document:", err);
+        });
+      }
+    }, (error) => {
+      console.warn("Chore database sync listener error:", error);
+    });
+
+    return () => unsub();
+  }, [selectedType, currentUser]);
+
+  const toggleChore = async (id: string) => {
     const todayStr = getTodayDateString();
-    localStorage.setItem(`farm_chores_${selectedType}_${todayStr}`, JSON.stringify(updated));
+    const cacheKey = `farm_chores_${selectedType}_${todayStr}`;
+    const updated = chores.map(c => c.id === id ? { ...c, completed: !c.completed } : c);
+    
+    // Instantly commit local cache and UI state for zero-latency response
+    setChores(updated);
+    localStorage.setItem(cacheKey, JSON.stringify(updated));
+
+    // Try to sync to Firestore if onLine / logged in
+    if (currentUser) {
+      const docId = `${currentUser.uid}_${selectedType}_${todayStr}`;
+      const choreDocRef = doc(db, 'chores', docId);
+      try {
+        await offlineSafeDocWrite(setDoc(choreDocRef, {
+          userId: currentUser.uid,
+          date: todayStr,
+          farmType: selectedType,
+          list: updated,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }));
+      } catch (err) {
+        console.warn("Error syncing checked chore state to cloud database:", err);
+      }
+    }
   };
 
   useEffect(() => {
@@ -459,37 +515,54 @@ export default function Home() {
       </div>
 
       {/* Header Greeting Bar */}
-      <div className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className={`text-[10px] font-extrabold tracking-wide uppercase px-3 py-1 rounded-full inline-block font-sans ${selectStyle.tagColor}`}>
-              {language === 'bn' ? selectStyle.tabLabelBn : selectStyle.tabLabelEn}
+      <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="relative shrink-0">
+            {currentUser?.photoURL ? (
+              <img src={currentUser.photoURL} alt="Profile" className="w-14 h-14 rounded-2xl border-2 border-emerald-500 object-cover shadow-xs" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center font-bold text-xl shadow-xs border-2 border-white">
+                {(profileData?.name || currentUser?.displayName || 'U').charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border border-white"></span>
             </span>
-            <div className="flex items-center gap-1.5 text-slate-400 text-xs bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
-              <Clock size={12} className="text-slate-400" />
-              <span className="font-mono font-bold tracking-tight">{timeStr}</span>
-            </div>
           </div>
-          <h2 className="text-slate-500 text-sm font-medium tracking-wide">
-            {language === 'bn' ? `${greeting.bn},` : `${greeting.en},`}
-          </h2>
-          <h3 className="text-2xl font-black text-slate-800 tracking-tight mt-0.5">
-            {profileData?.name || currentUser?.displayName || t('dashboard.khamari')}
-          </h3>
-          {profileData?.farmName && (
-            <p className="text-xs text-slate-500 mt-1.5 font-bold flex items-center gap-1 bg-emerald-50/50 text-emerald-800 px-2.5 py-1 rounded-lg w-max border border-emerald-100/30">
-              🏡 {profileData.farmName}
+
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className={`text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 rounded-md inline-block ${selectStyle.tagColor}`}>
+                {language === 'bn' ? selectStyle.tabLabelBn : selectStyle.tabLabelEn}
+              </span>
+              <div className="flex items-center gap-1 text-[10px] text-slate-400 bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-100">
+                <Clock size={10} className="text-slate-400" />
+                <span className="font-mono font-bold tracking-tight">{timeStr}</span>
+              </div>
+            </div>
+            
+            <p className="text-slate-400 text-xs font-bold leading-none">
+              {language === 'bn' ? `${greeting.bn},` : `${greeting.en},`}
             </p>
-          )}
+            <h3 className="text-lg font-black text-slate-805 tracking-tight mt-1 leading-tight">
+              {profileData?.name || currentUser?.displayName || t('dashboard.khamari')}
+            </h3>
+            {profileData?.farmName && (
+              <p className="text-[11px] text-emerald-800 mt-1 font-bold flex items-center gap-1 bg-emerald-50/50 px-2.5 py-0.5 rounded-lg w-max border border-emerald-100/30">
+                🏡 {profileData.farmName}
+              </p>
+            )}
+          </div>
         </div>
         
         {/* Farm Health/Status Quick Tag */}
-        <div className="bg-emerald-50/30 border border-emerald-100/55 p-4 rounded-xl flex items-center gap-3 self-start md:self-auto min-w-[180px]">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-sm shadow-emerald-100 animate-pulse">
-            <ShieldCheck size={20} />
+        <div className="bg-emerald-50/20 border border-emerald-100/50 p-3 rounded-xl flex items-center gap-3 self-start sm:self-auto min-w-[170px]">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-xs animate-pulse">
+            <ShieldCheck size={16} />
           </div>
           <div>
-            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">{language === 'bn' ? 'সিকিউরিটি' : 'System Secure'}</p>
+            <p className="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">{language === 'bn' ? 'নিরাপত্তা' : 'System Secure'}</p>
             <p className="text-xs text-slate-800 font-extrabold">{language === 'bn' ? 'অনলাইন ও সুরক্ষিত' : 'Secure & Connected'}</p>
           </div>
         </div>
@@ -570,253 +643,304 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Daily Farm Checklist Card */}
-      <div className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100">
-        <div className="flex justify-between items-center mb-4">
-          <div>
-            <h4 className="font-bold text-slate-800 flex items-center gap-2 text-base">
-              <CheckCircle size={20} className="text-emerald-500" />
-              {language === 'bn' ? `${selectedType === 'poultry' ? 'পোল্ট্রি' : selectedType === 'cattle' ? 'পশুপালন' : 'মৎস্য চাষ'} দৈনিক তদারকি` : `${selectedType.toUpperCase()} Daily Tasks`}
-            </h4>
-            <p className="text-xs text-slate-400 mt-1">
-              {language === 'bn' ? 'কাজ শেষে টিক দিয়ে সম্পূর্ণ করুন' : 'Tick off operations as you complete them daily'}
-            </p>
-          </div>
-          <span className="text-xs font-black px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full shrink-0 border border-emerald-100">
-            {totalCompletedChores}/{chores.length}
-          </span>
-        </div>
-
-        {/* Action Progress */}
-        <div className="w-full bg-slate-100 h-2 rounded-full mb-5 overflow-hidden">
-          <div 
-            className="bg-emerald-500 h-full transition-all duration-500 rounded-full" 
-            style={{ width: `${progressPercent}%` }}
-          ></div>
-        </div>
-
-        <div className="space-y-3">
-          {chores.map((chore) => (
-            <button
-              key={chore.id}
-              onClick={() => toggleChore(chore.id)}
-              className={`w-full text-left p-3.5 rounded-xl flex items-center gap-3 transition-all duration-150 cursor-pointer ${
-                chore.completed 
-                  ? 'bg-slate-50/55 border border-slate-150/50 text-slate-400 line-through' 
-                  : 'bg-slate-50/90 border border-slate-100 text-slate-700 hover:bg-slate-100 hover:border-slate-200'
-              }`}
-            >
-              <div className="shrink-0 transition-transform active:scale-95 duration-100">
-                {chore.completed ? (
-                  <CheckSquare size={20} className="text-emerald-600" />
-                ) : (
-                  <Square size={20} className="text-slate-400 hover:text-emerald-500" />
-                )}
-              </div>
-              <span className="text-xs sm:text-sm font-bold leading-snug">
-                {language === 'bn' ? chore.textBn : chore.textEn}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Active Batch Overview filtered by current type if matched, otherwise shows overall */}
-      {activeBatch ? (
-        <div className="bg-white rounded-2xl p-6 shadow-xs border border-emerald-100">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <Package size={20} className="text-emerald-600" />
-              <h4 className="font-bold text-slate-800 text-base">
-                {t('dashboard.activeBatches')}: <span className="text-emerald-600 font-black">{activeBatch.batchName}</span>
-              </h4>
-            </div>
-            <span className="text-[10px] font-black px-2.5 py-0.5 bg-emerald-100 text-emerald-850 rounded-full tracking-wider uppercase">
-              {language === 'bn' ? 'চলমান' : 'Active'}
-            </span>
-          </div>
+      {/* Dynamic Sub-Tabs section for excessive vertical height reduction */}
+      <div className="mt-2 space-y-5">
+        
+        {/* Modern Tab Selector Switch bar */}
+        <div className="flex bg-slate-100/75 p-1 rounded-xl gap-1 sticky top-[72px] z-10 backdrop-blur-md shadow-xs border border-slate-200/40">
+          <button
+            onClick={() => setActiveHomeTab('tasks')}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-extrabold transition-all duration-300 cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none ${
+              activeHomeTab === 'tasks'
+                ? 'bg-white text-emerald-800 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            📋 <span>{language === 'bn' ? 'তদারকি ও আবহাওয়া' : 'Tasks & Weather'}</span>
+          </button>
           
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-100 max:h-22 flex flex-col justify-center">
-              <p className="text-[11px] text-slate-500 font-bold mb-1">
-                {selectedType === 'cattle' ? (language === 'bn' ? 'মোট পশু সংখ্যা' : 'Total Livestock') : t('dashboard.totalBirds')}
-              </p>
-              <p className="text-xl font-black text-blue-700 font-sans">{activeBatch.totalChicks} {language === 'bn' ? 'টি' : ''}</p>
-            </div>
-            <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-100 max:h-22 flex flex-col justify-center">
-              <p className="text-[11px] text-slate-500 font-bold mb-1">{t('dashboard.age')}</p>
-              <p className="text-xl font-black text-amber-700 font-sans">
-                {calculateAge(activeBatch.startDate)} {t('dashboard.days')}
-              </p>
-            </div>
-            {selectedType !== 'fish' && (
-              <div className="col-span-2 bg-red-50/40 p-4 rounded-xl border border-red-100 flex justify-between items-center">
-                <div>
-                  <p className="text-[11px] text-slate-500 font-bold mb-1">{t('dashboard.totalMortality')}</p>
-                  <p className="text-xl font-black text-red-600 font-sans">{totalMortality} {language === 'bn' ? 'টি' : ''}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs bg-red-100 text-red-700 rounded-full font-extrabold px-3 py-1 inline-block">
-                    {language === 'bn' ? 'মৃত্যুহার: ' : 'Mortality: '}
-                    {activeBatch.totalChicks > 0 ? ((totalMortality / activeBatch.totalChicks) * 100).toFixed(1) : 0}%
+          <button
+            onClick={() => setActiveHomeTab('batch')}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-extrabold transition-all duration-300 cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none ${
+              activeHomeTab === 'batch'
+                ? 'bg-white text-emerald-800 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            📊 <span>{language === 'bn' ? 'চলমান ব্যাচ' : 'Active Batch'}</span>
+          </button>
+          
+          <button
+            onClick={() => setActiveHomeTab('calculator')}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-extrabold transition-all duration-300 cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none ${
+              activeHomeTab === 'calculator'
+                ? 'bg-white text-emerald-800 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            🧮 <span>{language === 'bn' ? 'ক্যালকুলেটর' : 'Calculator'}</span>
+          </button>
+        </div>
+
+        {/* Dynamic Panels Content display */}
+        <div className="space-y-5">
+          {activeHomeTab === 'tasks' ? (
+            <div className="space-y-5 animate-fadeIn">
+              {/* Daily Farm Checklist Card */}
+              <div className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100">
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h4 className="font-bold text-slate-800 flex items-center gap-2 text-base">
+                      <CheckCircle size={20} className="text-emerald-500" />
+                      {language === 'bn' ? `${selectedType === 'poultry' ? 'পোল্ট্রি' : selectedType === 'cattle' ? 'পশুপালন' : 'মৎস্য চাষ'} দৈনিক তদারকি` : `${selectedType.toUpperCase()} Daily Tasks`}
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {language === 'bn' ? 'কাজ শেষে টিক দিয়ে সম্পূর্ণ করুন' : 'Tick off operations as you complete them daily'}
+                    </p>
+                  </div>
+                  <span className="text-xs font-black px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full shrink-0 border border-emerald-100">
+                    {totalCompletedChores}/{chores.length}
                   </span>
                 </div>
+
+                {/* Action Progress */}
+                <div className="w-full bg-slate-100 h-2 rounded-full mb-5 overflow-hidden">
+                  <div 
+                    className="bg-emerald-500 h-full transition-all duration-500 rounded-full" 
+                    style={{ width: `${progressPercent}%` }}
+                  ></div>
+                </div>
+
+                <div className="space-y-3">
+                  {chores.map((chore) => (
+                    <button
+                      key={chore.id}
+                      onClick={() => toggleChore(chore.id)}
+                      className={`w-full text-left p-3.5 rounded-xl flex items-center gap-3 transition-all duration-150 cursor-pointer ${
+                        chore.completed 
+                          ? 'bg-slate-50/55 border border-slate-150/50 text-slate-400 line-through' 
+                          : 'bg-slate-50/90 border border-slate-100 text-slate-700 hover:bg-slate-100 hover:border-slate-200'
+                      }`}
+                    >
+                      <div className="shrink-0 transition-transform active:scale-95 duration-100">
+                        {chore.completed ? (
+                          <CheckSquare size={20} className="text-emerald-600" />
+                        ) : (
+                          <Square size={20} className="text-slate-400 hover:text-emerald-500" />
+                        )}
+                      </div>
+                      <span className="text-xs sm:text-sm font-bold leading-snug">
+                        {language === 'bn' ? chore.textBn : chore.textEn}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
 
-          <Link 
-            to={`/batches`} 
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-700 hover:to-green-600 text-white py-3 px-4 rounded-xl font-bold transition-all shadow-sm shadow-emerald-100 text-sm cursor-pointer"
-          >
-            {language === 'bn' ? 'খামারের বিস্তারিত এনালাইটিক্স' : 'View Detailed Farm Analytics'} <ChevronRight size={16} />
-          </Link>
-        </div>
-      ) : (
-        <div className="bg-white rounded-2xl p-6 shadow-xs text-center border-dashed border-2 border-slate-200">
-          <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
-            <Package size={28} className="text-slate-400" />
-          </div>
-          <h4 className="font-extrabold text-slate-800 mb-1">
-            {language === 'bn' ? `কোনো চলমান ${selectedType === 'poultry' ? 'পোল্ট্রি' : selectedType === 'cattle' ? 'পশু' : 'মাছ'} ব্যাচ নেই` : `No active ${selectedType} batch`}
-          </h4>
-          <p className="text-xs text-slate-400 mb-4">{t('dashboard.noBatchesSub')}</p>
-          <Link to="/batches" className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-emerald-750 inline-block transition-colors cursor-pointer text-xs">
-            {t('dashboard.createBatch')}
-          </Link>
-        </div>
-      )}
-
-      {/* Weather Indicator & Livestock Comfort Meter */}
-      <div className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100">
-        <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-base">
-          <Thermometer size={19} className="text-orange-500" />
-          {selectedType === 'fish' 
-            ? (language === 'bn' ? 'জলবায়ু ও পানির মান নিরাপত্তা নির্দেশক' : 'Water & Climatic Safety Meter')
-            : (language === 'bn' ? 'আবহাওয়া ও তাপমাত্রা নিরাপত্তা নির্দেশক' : 'Weather & Thermal Comfort Level')
-          }
-        </h4>
-        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-          {selectedType === 'fish'
-            ? (language === 'bn' ? 'অতিরিক্ত বৃষ্টি বা মেঘলা মেঘাচ্ছন্ন আবহাওয়ায় পুকুরের সার্বিক রিডিং নিয়মিত তদারকি করুন।' : 'Aggressive rain or cloudy state needs careful pond observation.')
-            : (language === 'bn' ? 'ঋতু পরিবর্তনের সময় খামারের আর্দ্রতা ও তাপমাত্রা নিয়ন্ত্রণ জরুরি।' : 'Monitor livestock thermal heat index to prevent heat strokes.')
-          }
-        </p>
-        
-        {selectedType === 'fish' ? (
-          <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <CloudRain size={28} className="text-blue-500 shrink-0" />
-              <div>
-                <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'টানা শীতল বৃষ্টিপাত (পানি শীতলীকরণ ঝুঁকি)' : 'Persistent Rainfall (Cool Water Warning)'}</p>
-                <p className="text-[10px] text-blue-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: মাছের রোগপ্রতিরোধ ক্ষমতা হ্রাস ও খাবার অরুচি।' : 'Risk level: Low appetite. Minimize artificially fed portions.'}</p>
+              {/* Weather Indicator & Livestock Comfort Meter (placed inside tasks tab) */}
+              <div className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100">
+                <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-base">
+                  <Thermometer size={19} className="text-orange-500" />
+                  {selectedType === 'fish' 
+                    ? (language === 'bn' ? 'জলবায়ু ও পানির মান নিরাপত্তা নির্দেশক' : 'Water & Climatic Safety Meter')
+                    : (language === 'bn' ? 'আবহাওয়া ও তাপমাত্রা নিরাপত্তা নির্দেশক' : 'Weather & Thermal Comfort Level')
+                  }
+                </h4>
+                <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                  {selectedType === 'fish'
+                    ? (language === 'bn' ? 'অতিরিক্ত বৃষ্টি বা মেঘলা মেঘাচ্ছন্ন আবহাওয়ায় পুকুরের সার্বিক রিডিং নিয়মিত তদারকি করুন।' : 'Aggressive rain or cloudy state needs careful pond observation.')
+                    : (language === 'bn' ? 'ঋতু পরিবর্তনের সময় খামারের আর্দ্রতা ও তাপমাত্রা নিয়ন্ত্রণ জরুরি।' : 'Monitor livestock thermal heat index to prevent heat strokes.')
+                  }
+                </p>
+                
+                {selectedType === 'fish' ? (
+                  <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <CloudRain size={28} className="text-blue-500 shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'টানা শীতল বৃষ্টিপাত (পানি শীতলীকরণ ঝুঁকি)' : 'Persistent Rainfall (Cool Water Warning)'}</p>
+                        <p className="text-[10px] text-blue-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: মাছের রোগপ্রতিরোধ ক্ষমতা হ্রাস ও খাবার অরুচি।' : 'Risk level: Low appetite. Minimize artificially fed portions.'}</p>
+                      </div>
+                    </div>
+                    <div className="bg-blue-150 text-blue-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
+                      {language === 'bn' ? 'পুকুরে হালকা লবণ ছিটান' : 'Apply Trace Coarse Salt'}
+                    </div>
+                  </div>
+                ) : selectedType === 'cattle' ? (
+                  <div className="bg-amber-50/50 rounded-xl p-4 border border-amber-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <Sun size={28} className="text-amber-500 shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'উষ্ণ আদ্র আবহাওয়া সতর্কীকরণ স্তর (Heat Stress)' : 'High Relative Moisture Level'}</p>
+                        <p className="text-[10px] text-amber-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: গরুর শ্বাসকষ্ট বা দোহনের পরিমাণ হ্রাস পাওয়ার আশঙ্কা।' : 'Risk: High respiration rate. Retain active fans.'}</p>
+                      </div>
+                    </div>
+                    <div className="bg-amber-100 text-amber-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
+                      {language === 'bn' ? 'ঠান্ডা বিশুদ্ধ পানি নিশ্চিত করুন' : 'Deliver Fresh Cold Water'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-orange-50/50 rounded-xl p-4 border border-orange-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <Sun size={28} className="text-amber-500 shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'তীব্র গরমের দিন (৩০°C - ৩৫°C)' : 'High Heat Index Warning (30°C - 35°C)'}</p>
+                        <p className="text-[10px] text-amber-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: হিট স্ট্রোকের সম্ভাবনা আছে।' : 'Risk level: High risk of flock heat strain.'}</p>
+                      </div>
+                    </div>
+                    <div className="bg-orange-100 text-orange-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
+                      {language === 'bn' ? 'পানির পরিমাণ দ্বিগুণ করুন' : 'Double Liquid Intakes'}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="bg-blue-150 text-blue-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
-              {language === 'bn' ? 'পুকুরে হালকা লবণ ছিটান' : 'Apply Trace Coarse Salt'}
+          ) : activeHomeTab === 'batch' ? (
+            <div className="animate-fadeIn">
+              {/* Active Batch Overview filtered by current type if matched */}
+              {activeBatch ? (
+                <div className="bg-white rounded-2xl p-6 shadow-xs border border-emerald-100">
+                  <div className="flex justify-between items-center mb-4">
+                    <div className="flex items-center gap-2">
+                      <Package size={20} className="text-emerald-600" />
+                      <h4 className="font-bold text-slate-800 text-base">
+                        {t('dashboard.activeBatches')}: <span className="text-emerald-600 font-black">{activeBatch.batchName}</span>
+                      </h4>
+                    </div>
+                    <span className="text-[10px] font-black px-2.5 py-0.5 bg-emerald-100 text-emerald-850 rounded-full tracking-wider uppercase">
+                      {language === 'bn' ? 'চলমান' : 'Active'}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-100 max:h-22 flex flex-col justify-center">
+                      <p className="text-[11px] text-slate-500 font-bold mb-1">
+                        {selectedType === 'cattle' ? (language === 'bn' ? 'মোট পশু সংখ্যা' : 'Total Livestock') : t('dashboard.totalBirds')}
+                      </p>
+                      <p className="text-xl font-black text-blue-700 font-sans">{activeBatch.totalChicks} {language === 'bn' ? 'টি' : ''}</p>
+                    </div>
+                    <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-100 max:h-22 flex flex-col justify-center">
+                      <p className="text-[11px] text-slate-500 font-bold mb-1">{t('dashboard.age')}</p>
+                      <p className="text-xl font-black text-amber-700 font-sans">
+                        {calculateAge(activeBatch.startDate)} {t('dashboard.days')}
+                      </p>
+                    </div>
+                    {selectedType !== 'fish' && (
+                      <div className="col-span-2 bg-red-50/40 p-4 rounded-xl border border-red-100 flex justify-between items-center">
+                        <div>
+                          <p className="text-[11px] text-slate-500 font-bold mb-1">{t('dashboard.totalMortality')}</p>
+                          <p className="text-xl font-black text-red-600 font-sans">{totalMortality} {language === 'bn' ? 'টি' : ''}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs bg-red-100 text-red-700 rounded-full font-extrabold px-3 py-1 inline-block">
+                            {language === 'bn' ? 'মৃত্যুহার: ' : 'Mortality: '}
+                            {activeBatch.totalChicks > 0 ? ((totalMortality / activeBatch.totalChicks) * 100).toFixed(1) : 0}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <Link 
+                    to={`/batches`} 
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-700 hover:to-green-600 text-white py-3 px-4 rounded-xl font-bold transition-all shadow-sm shadow-emerald-100 text-sm cursor-pointer"
+                  >
+                    {language === 'bn' ? 'খামারের বিস্তারিত এনালাইটিক্স' : 'View Detailed Farm Analytics'} <ChevronRight size={16} />
+                  </Link>
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl p-6 shadow-xs text-center border-dashed border-2 border-slate-200">
+                  <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Package size={28} className="text-slate-400" />
+                  </div>
+                  <h4 className="font-extrabold text-slate-800 mb-1">
+                    {language === 'bn' ? `কোনো চলমান ${selectedType === 'poultry' ? 'পোল্ট্রি' : selectedType === 'cattle' ? 'পশু' : 'মাছ'} ব্যাচ নেই` : `No active ${selectedType} batch`}
+                  </h4>
+                  <p className="text-xs text-slate-400 mb-4">{t('dashboard.noBatchesSub')}</p>
+                  <Link to="/batches" className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-emerald-750 inline-block transition-colors cursor-pointer text-xs">
+                    {t('dashboard.createBatch')}
+                  </Link>
+                </div>
+              )}
             </div>
-          </div>
-        ) : selectedType === 'cattle' ? (
-          <div className="bg-amber-50/50 rounded-xl p-4 border border-amber-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Sun size={28} className="text-amber-500 shrink-0" />
-              <div>
-                <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'উষ্ণ আদ্র আবহাওয়া সতর্কীকরণ স্তর (Heat Stress)' : 'High Relative Moisture Level'}</p>
-                <p className="text-[10px] text-amber-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: গরুর শ্বাসকষ্ট বা দোহনের পরিমাণ হ্রাস পাওয়ার আশঙ্কা।' : 'Risk: High respiration rate. Retain active fans.'}</p>
+          ) : (
+            <div className="space-y-5 animate-fadeIn">
+              {/* Target Weight Companion Tool */}
+              <div className="bg-gradient-to-br from-emerald-50/40 to-green-50/30 rounded-2xl p-6 shadow-xs border border-green-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Calculator size={20} className="text-emerald-700" />
+                  <h4 className="font-bold text-slate-850 text-base">
+                    {language === 'bn' ? 'সহকারী বৃদ্ধি লক্ষ্যমাত্র ক্যালকুলেটর' : 'Farm Target Growth Estimator'}
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-1">
+                      {language === 'bn' ? 'খামারের ক্যাটাগরি' : 'Category'}
+                    </label>
+                    <select
+                      value={calcBreed}
+                      onChange={(e: any) => setCalcBreed(e.target.value)}
+                      className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="broiler">{language === 'bn' ? 'ব্রয়লার মুরগি (Broiler)' : 'Broiler Poultry'}</option>
+                      <option value="sonali">{language === 'bn' ? 'সোনালী মুরগি (Sonali)' : 'Sonali Breed'}</option>
+                      <option value="cattle">{language === 'bn' ? 'গরু ও ছাগল (Cattle)' : 'Cattle & Sheep'}</option>
+                      <option value="fish">{language === 'bn' ? 'মাছ চাষ (Fishery)' : 'Fishery/Pond'}</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-1">
+                      {calcBreed === 'cattle' || calcBreed === 'fish'
+                        ? (language === 'bn' ? 'পর্যবেক্ষণ সময় (দিন)' : 'Time (Days)') 
+                        : (language === 'bn' ? 'পশুপাখির বয়স (দিন)' : 'Age (Days)')
+                      }
+                    </label>
+                    <input 
+                      type="number" 
+                      value={calcAge}
+                      onChange={(e) => setCalcAge(e.target.value)}
+                      placeholder="e.g. 15"
+                      min="1"
+                      max="150"
+                      className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold font-sans hover:border-slate-350 focus:outline-none focus:ring-1 focus:ring-emerald-500" 
+                    />
+                  </div>
+                </div>
+
+                {calcResult && (
+                  <div className="bg-white p-4 rounded-xl border border-slate-200/50 space-y-2.5">
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 border-dotted">
+                      <span className="text-xs text-slate-500 font-bold">{language === 'bn' ? 'আদর্শ স্তর/ওজন:' : 'Target Weight/State:'}</span>
+                      <span className="text-sm font-black text-emerald-700 font-sans">{calcResult.weight}</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <Info size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                      <p className="text-xs text-slate-600 font-bold leading-relaxed">{calcResult.advice}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Developer & Owner Help Channel info */}
+              <div className="bg-slate-50/40 rounded-2xl p-6 border border-dashed border-slate-200 flex flex-col text-center items-center justify-center">
+                <h4 className="text-[10px] font-extrabold text-blue-600 uppercase tracking-widest">{language === 'bn' ? 'সহায়তা ও যোগাযোগ' : 'Developer & Support'}</h4>
+                <p className="text-xs text-slate-500 mt-1 font-bold max-w-sm leading-relaxed">
+                  {language === 'bn' ? 'কোনো জিজ্ঞাসা বা সাহায্য লাগলে, যেকোনো সময় আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করতে পারেন।' : 'For queries or custom setup guidance, connect with our technical support line anytime.'}
+                </p>
+                <a 
+                  href="tel:+8801700000000" 
+                  className="mt-4 flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors text-xs font-bold px-4 py-2.5 rounded-xl cursor-pointer"
+                >
+                  <PhoneCall size={14} />
+                  {language === 'bn' ? 'সাপোর্ট হটলাইন কল করুন' : 'Call Support Team'}
+                </a>
               </div>
             </div>
-            <div className="bg-amber-100 text-amber-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
-              {language === 'bn' ? 'ঠান্ডা বিশুদ্ধ পানি নিশ্চিত করুন' : 'Deliver Fresh Cold Water'}
-            </div>
-          </div>
-        ) : (
-          <div className="bg-orange-50/50 rounded-xl p-4 border border-orange-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Sun size={28} className="text-amber-500 shrink-0" />
-              <div>
-                <p className="text-xs font-bold text-slate-800">{language === 'bn' ? 'তীব্র গরমের দিন (৩০°C - ৩৫°C)' : 'High Heat Index Warning (30°C - 35°C)'}</p>
-                <p className="text-[10px] text-amber-700 font-extrabold mt-0.5">{language === 'bn' ? 'সতর্কতা: হিট স্ট্রোকের সম্ভাবনা আছে।' : 'Risk level: High risk of flock heat strain.'}</p>
-              </div>
-            </div>
-            <div className="bg-orange-100 text-orange-900 text-[10px] font-black tracking-wide px-3 py-1.5 rounded-lg shrink-0">
-              {language === 'bn' ? 'পানির পরিমাণ দ্বিগুণ করুন' : 'Double Liquid Intakes'}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Target Weight Companion Tool */}
-      <div className="bg-gradient-to-br from-emerald-50/40 to-green-50/30 rounded-2xl p-6 shadow-xs border border-green-200">
-        <div className="flex items-center gap-2 mb-3">
-          <Calculator size={20} className="text-emerald-700" />
-          <h4 className="font-bold text-slate-850 text-base">
-            {language === 'bn' ? 'সহকারী বৃদ্ধি লক্ষ্যমাত্র ক্যালকুলেটর' : 'Farm Target Growth Estimator'}
-          </h4>
+          )}
         </div>
-
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div>
-            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-1">
-              {language === 'bn' ? 'খামারের ক্যাটাগরি' : 'Category'}
-            </label>
-            <select
-              value={calcBreed}
-              onChange={(e: any) => setCalcBreed(e.target.value)}
-              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            >
-              <option value="broiler">{language === 'bn' ? 'ব্রয়লার মুরগি (Broiler)' : 'Broiler Poultry'}</option>
-              <option value="sonali">{language === 'bn' ? 'সোনালী মুরগি (Sonali)' : 'Sonali Breed'}</option>
-              <option value="cattle">{language === 'bn' ? 'গরু ও ছাগল (Cattle)' : 'Cattle & Sheep'}</option>
-              <option value="fish">{language === 'bn' ? 'মাছ চাষ (Fishery)' : 'Fishery/Pond'}</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-1">
-              {calcBreed === 'cattle' || calcBreed === 'fish'
-                ? (language === 'bn' ? 'পর্যবেক্ষণ সময় (দিন)' : 'Time (Days)') 
-                : (language === 'bn' ? 'পশুপাখির বয়স (দিন)' : 'Age (Days)')
-              }
-            </label>
-            <input 
-              type="number" 
-              value={calcAge}
-              onChange={(e) => setCalcAge(e.target.value)}
-              placeholder="e.g. 15"
-              min="1"
-              max="150"
-              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold font-sans hover:border-slate-350 focus:outline-none focus:ring-1 focus:ring-emerald-500" 
-            />
-          </div>
-        </div>
-
-        {calcResult && (
-          <div className="bg-white p-4 rounded-xl border border-slate-200/50 space-y-2.5">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100 border-dotted">
-              <span className="text-xs text-slate-500 font-bold">{language === 'bn' ? 'আদর্শ স্তর/ওজন:' : 'Target Weight/State:'}</span>
-              <span className="text-sm font-black text-emerald-700 font-sans">{calcResult.weight}</span>
-            </div>
-            <div className="flex items-start gap-1.5">
-              <Info size={14} className="text-emerald-600 mt-0.5 shrink-0" />
-              <p className="text-xs text-slate-600 font-bold leading-relaxed">{calcResult.advice}</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Developer & Owner Help Channel info */}
-      <div className="bg-slate-50/40 rounded-2xl p-6 border border-dashed border-slate-200 flex flex-col text-center items-center justify-center">
-        <h4 className="text-[10px] font-extrabold text-blue-600 uppercase tracking-widest">{language === 'bn' ? 'সহায়তা ও যোগাযোগ' : 'Developer & Support'}</h4>
-        <p className="text-xs text-slate-500 mt-1 font-bold max-w-sm leading-relaxed">
-          {language === 'bn' ? 'কোনো জিজ্ঞাসা বা সাহায্য লাগলে, যেকোনো সময় আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করতে পারেন।' : 'For queries or custom setup guidance, connect with our technical support line anytime.'}
-        </p>
-        <a 
-          href="tel:+8801700000000" 
-          className="mt-4 flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors text-xs font-bold px-4 py-2.5 rounded-xl cursor-pointer"
-        >
-          <PhoneCall size={14} />
-          {language === 'bn' ? 'সাপোর্ট হটলাইন কল করুন' : 'Call Support Team'}
-        </a>
       </div>
 
     </div>

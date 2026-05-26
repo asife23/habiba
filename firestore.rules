@@ -193,5 +193,12 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['personName', 'phone', 'type', 'amount', 'totalPaid', 'details', 'recordDate', 'status', 'updatedAt', 'payments']);
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
+
+    match /chores/{choreId} {
+      allow read: if isSignedIn() && (!resource || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
   }
 }
