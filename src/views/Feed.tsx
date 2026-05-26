@@ -119,6 +119,7 @@ export default function Feed() {
     submitLock.current = true;
 
     try {
+      const normalizedPersonName = personName.trim().replace(/\s+/g, ' ');
       const newRecord = {
         userId: currentUser.uid,
         batchId,
@@ -128,7 +129,7 @@ export default function Feed() {
         cost: totalAmountVal,
         pricePerBag: price,
         amountPaid: paidVal,
-        personName,
+        personName: normalizedPersonName,
         details,
         createdAt: new Date().toISOString()
       };
@@ -139,7 +140,7 @@ export default function Feed() {
         const batchName = activeBatches.find(b => b.id === batchId)?.batchName || 'Unknown Batch';
         const dueRecord = {
           userId: currentUser.uid,
-          personName,
+          personName: normalizedPersonName,
           phone: personPhone,
           type: 'payable',
           amount: totalAmountVal,

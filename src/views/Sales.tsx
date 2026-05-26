@@ -122,6 +122,7 @@ export default function Sales() {
     submitLock.current = true;
 
     try {
+      const normalizedBuyerName = buyerName.trim().replace(/\s+/g, ' ');
       const newRecord = {
         userId: currentUser.uid,
         batchId,
@@ -133,7 +134,7 @@ export default function Sales() {
         pricePerPiece: saleType === 'quantity' ? Number(pricePerPiece) : 0,
         totalAmount: totalAmountVal,
         amountPaid: paidVal,
-        buyerName,
+        buyerName: normalizedBuyerName,
         createdAt: new Date().toISOString()
       };
 
@@ -143,7 +144,7 @@ export default function Sales() {
         const batchName = activeBatches.find(b => b.id === batchId)?.batchName || 'Unknown Batch';
         const dueRecord = {
           userId: currentUser.uid,
-          personName: buyerName,
+          personName: normalizedBuyerName,
           phone: buyerPhone,
           type: 'receivable',
           amount: totalAmountVal,

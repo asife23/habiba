@@ -46,13 +46,16 @@ export default function Dues() {
   const summary = useMemo(() => {
     const map: Record<string, { payable: number; receivable: number; totalRecords: number }> = {};
     records.forEach(r => {
-      if (!map[r.personName]) map[r.personName] = { payable: 0, receivable: 0, totalRecords: 0 };
-      map[r.personName].totalRecords += 1;
+      const normalizedName = (r.personName || '').trim().replace(/\s+/g, ' ');
+      if (!normalizedName) return;
+
+      if (!map[normalizedName]) map[normalizedName] = { payable: 0, receivable: 0, totalRecords: 0 };
+      map[normalizedName].totalRecords += 1;
 
       const remaining = r.amount - (r.totalPaid || 0);
       if (remaining > 0) {
-        if (r.type === 'payable') map[r.personName].payable += remaining;
-        else if (r.type === 'receivable') map[r.personName].receivable += remaining;
+        if (r.type === 'payable') map[normalizedName].payable += remaining;
+        else if (r.type === 'receivable') map[normalizedName].receivable += remaining;
       }
     });
     return map;
@@ -74,7 +77,7 @@ export default function Dues() {
     try {
       const newRecord = {
         userId: currentUser.uid,
-        personName,
+        personName: personName.trim().replace(/\s+/g, ' '),
         phone,
         type,
         amount: Number(amount),
@@ -311,7 +314,8 @@ export default function Dues() {
           const isPayable = record.type === 'payable';
           const totalPaid = record.totalPaid || 0;
           const remainingDue = record.amount - totalPaid;
-          const s = summary[record.personName];
+          const normalizedName = (record.personName || '').trim().replace(/\s+/g, ' ');
+          const s = summary[normalizedName];
           return (
             <div key={record.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm relative">
               <div className="flex justify-between items-start mb-2">

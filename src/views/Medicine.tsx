@@ -87,6 +87,7 @@ export default function Medicine() {
     submitLock.current = true;
 
     try {
+      const normalizedPersonName = personName.trim().replace(/\s+/g, ' ');
       const newRecord = {
         userId: currentUser.uid,
         batchId,
@@ -95,7 +96,7 @@ export default function Medicine() {
         type,
         cost: totalAmountVal,
         amountPaid: paidVal,
-        personName,
+        personName: normalizedPersonName,
         details,
         createdAt: new Date().toISOString()
       };
@@ -108,7 +109,7 @@ export default function Medicine() {
         const formattedDetails = details ? '('+details+')' : '';
         const dueRecord = {
           userId: currentUser.uid,
-          personName,
+          personName: normalizedPersonName,
           phone: personPhone,
           type: 'payable',
           amount: totalAmountVal,

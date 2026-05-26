@@ -19,6 +19,7 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [logoSrc, setLogoSrc] = useState('/farm_app_icon_1779214389225.png');
 
   useEffect(() => {
     let authUser: User | null = null;
@@ -63,7 +64,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {loading ? (
         <div className="min-h-screen flex flex-col items-center justify-center bg-green-700">
           <div className="text-center animate-pulse">
-            <img src="/farm_app_icon_1779214389225.png" alt="Digital Farm Logo" className="w-32 h-32 mx-auto drop-shadow-xl mb-4 rounded-3xl" />
+            <img 
+              src={logoSrc} 
+              onError={() => setLogoSrc('/pwa-192x192.png')}
+              alt="Digital Farm Logo" 
+              className="w-32 h-32 mx-auto drop-shadow-xl mb-4 rounded-3xl" 
+            />
             <h1 className="text-4xl font-bold text-white tracking-wider">Digital Farm</h1>
             <p className="mt-2 text-green-100 font-medium font-sans">Smart Livestock & Farm Manager</p>
           </div>

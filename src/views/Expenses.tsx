@@ -97,6 +97,7 @@ export default function Expenses() {
     submitLock.current = true;
 
     try {
+      const normalizedPersonName = personName.trim().replace(/\s+/g, ' ');
       const newRecord = {
         userId: currentUser.uid,
         batchId,
@@ -104,7 +105,7 @@ export default function Expenses() {
         category: category || t('expenses.optElectricity'),
         amount: totalAmountVal,
         amountPaid: paidVal,
-        personName,
+        personName: normalizedPersonName,
         details,
         createdAt: new Date().toISOString()
       };
@@ -115,7 +116,7 @@ export default function Expenses() {
         const batchName = activeBatches.find(b => b.id === batchId)?.batchName || 'Unknown Batch';
         const dueRecord = {
           userId: currentUser.uid,
-          personName,
+          personName: normalizedPersonName,
           phone: personPhone,
           type: 'payable',
           amount: totalAmountVal,

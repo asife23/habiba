@@ -10,7 +10,32 @@
     <title>Digital Farm App</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #15803d; font-family: system-ui, -apple-system, sans-serif; position: fixed; inset: 0; z-index: 9999;">
+        <div style="text-align: center; padding: 20px;">
+          <img src="/farm_app_icon_1779214389225.png" onerror="this.onerror=null; this.src='/pwa-192x192.png';" alt="Digital Farm Logo" style="width: 110px; height: 110px; margin: 0 auto 20px auto; display: block; border-radius: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1); animation: logo-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;" />
+          <h1 style="font-size: 28px; font-weight: 800; color: #ffffff; letter-spacing: -0.025em; margin: 0; font-family: inherit;">ডিজিটাল খামার প্রো</h1>
+          <p style="margin: 8px 0 0 0; color: #dcfce7; font-weight: 500; font-size: 14px; font-family: inherit;">উন্নত খামার ব্যবস্থাপনা সফটওয়্যার</p>
+        </div>
+        <div style="position: absolute; bottom: 48px; width: 66%; max-width: 280px; text-align: center;">
+          <div style="height: 4px; width: 100%; background-color: rgba(22, 101, 52, 0.6); border-radius: 9999px; overflow: hidden; margin-bottom: 12px; position: relative;">
+            <div style="height: 100%; width: 50%; background-color: #ffffff; border-radius: 9999px; position: absolute; left: 0; top: 0; animation: bar-slide 1.5s infinite ease-in-out;"></div>
+          </div>
+          <p style="color: #bbf7d0; font-size: 13px; margin: 0; font-weight: 600; font-family: inherit;">লোড হচ্ছে, দয়া করে অপেক্ষা করুন...</p>
+        </div>
+        <style>
+          @keyframes logo-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .75; transform: scale(0.96); }
+          }
+          @keyframes bar-slide {
+            0% { left: -50%; width: 30%; }
+            50% { width: 40%; }
+            100% { left: 110%; width: 30%; }
+          }
+        </style>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
