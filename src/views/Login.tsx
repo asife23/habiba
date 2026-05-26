@@ -4,11 +4,13 @@ import { auth, db } from '../firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Mail, Lock, UserPlus, Sparkles } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
+import { Activity, Mail, Lock, UserPlus, Sparkles, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Login() {
   const { currentUser } = useAuth();
+  const { language } = useLanguage();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   
@@ -20,6 +22,7 @@ export default function Login() {
   const [name, setName] = useState('');
 
   const [step, setStep] = useState<'methods' | 'email'>('methods');
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
 
   if (currentUser) {
     return <Navigate to="/" replace />;
@@ -45,6 +48,7 @@ export default function Login() {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
+    setUnauthorizedDomain(null);
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
@@ -55,8 +59,9 @@ export default function Login() {
     } catch (error: any) {
       if (error.code === 'auth/popup-closed-by-user') {
         toast.error('লগইন উইন্ডোটি বন্ধ করে দেওয়া হয়েছে।');
-      } else if (error.code === 'auth/unauthorized-domain') {
-        toast.error('এই ডোমেইনটি Firebase-এ অনুমোদিত নয়।');
+      } else if (error.code === 'auth/unauthorized-domain' || (error.message && error.message.includes('auth/unauthorized-domain'))) {
+        setUnauthorizedDomain(window.location.hostname);
+        toast.error('এই ডোমেইনটি Firebase-এ অনুমোদিত নয়। নিচের নির্দেশাবলী দেখুন।');
       } else {
         toast.error('লগইন ব্যর্থ হয়েছে: ' + error.message);
       }
@@ -122,6 +127,52 @@ export default function Login() {
         </div>
         
         <div className="p-8">
+          {unauthorizedDomain && (
+            <div className="bg-red-50 border-2 border-red-250 rounded-xl p-4.5 mb-6 text-xs text-red-950 leading-relaxed font-sans font-medium">
+              <div className="flex items-start gap-2 mb-2">
+                <AlertTriangle className="text-red-650 shrink-0 mt-0.5" size={16} />
+                <h3 className="font-bold text-red-900 text-[13px]">
+                  {language === 'bn' ? 'ফায়ারবেজ ডোমেইন অনুমোদন প্রয়োজন' : 'Firebase Domain Authorization Required'}
+                </h3>
+              </div>
+              <p className="mb-2.5 text-red-900">
+                {language === 'bn' 
+                  ? 'গুগল লগইন করতে এই ডোমেইনটি আপনার ফায়ারবেজ প্রোজেক্টে হোয়াইটলিস্ট বা অনুমোদিত হিসেবে যোগ করতে হবে।' 
+                  : 'To use Google Auth, this domain must be added to the Authorized Domains list in your Firebase console.'}
+              </p>
+              
+              <div 
+                onClick={() => {
+                  navigator.clipboard.writeText(unauthorizedDomain);
+                  toast.success('ডোমেইন কপি করা হয়েছে!');
+                }}
+                className="bg-slate-900 hover:bg-slate-800 text-slate-100 p-2.5 rounded-lg font-mono text-[11px] select-all cursor-pointer break-all mb-3 text-center transition-colors flex items-center justify-center gap-1.5"
+                title="Click to copy page domain"
+              >
+                <span>💾 {unauthorizedDomain}</span>
+                <span className="text-[9px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">Copy</span>
+              </div>
+              
+              <h4 className="font-extrabold text-[11px] uppercase tracking-wider text-red-900 mb-1">
+                {language === 'bn' ? 'কীভাবে ঠিক করবেন:' : 'Step-by-Step Guide:'}
+              </h4>
+              <ol className="list-decimal pl-4.5 space-y-1 text-[11px] text-red-900 font-bold">
+                <li>
+                  {language === 'bn' ? 'প্রথমে Firebase Console-এ যান।' : 'Open your Firebase Console.'}
+                </li>
+                <li>
+                  {language === 'bn' ? 'Authentication > Settings > Authorized domains ট্যাবে ব্যাক করুন।' : 'Go to Authentication > Settings > Authorized domains.'}
+                </li>
+                <li>
+                  {language === 'bn' ? 'Add Domain বাটনে ক্লিক করে উপরের কপি করা ডোমেইনটি হুবহু বসিয়ে সেভ করুন।' : 'Click "Add Domain", paste the copied domain shown above, and save.'}
+                </li>
+                <li>
+                  {language === 'bn' ? 'সেভ করার পর, পেজটি রিফ্রেশ দিয়ে আবার গুগল দিয়ে ট্রাই করুন!' : 'Once added, refresh this webpage and try signing in again!'}
+                </li>
+              </ol>
+            </div>
+          )}
+
           {step === 'methods' && (
             <>
               <p className="text-gray-600 text-center mb-8">
