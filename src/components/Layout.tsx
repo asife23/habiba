@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Home, Package, ClipboardList, Wallet, FileText, Menu, AlertTriangle, ShieldPlus } from 'lucide-react';
+import { Home, Package, ClipboardList, Wallet, FileText, Menu, AlertTriangle, ShieldPlus, LayoutGrid } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -27,9 +27,9 @@ export default function Layout() {
 
   const navItems = [
     { name: t('menu.home'), path: '/', icon: Home },
+    { name: t('menu.dashboard'), path: '/dashboard', icon: LayoutGrid },
     { name: t('menu.batches'), path: '/batches', icon: Package },
     { name: t('menu.feed'), path: '/feed', icon: ClipboardList },
-    { name: t('menu.medicine'), path: '/medicine', icon: ShieldPlus },
     { name: t('menu.expenses'), path: '/expenses', icon: Wallet },
   ];
 

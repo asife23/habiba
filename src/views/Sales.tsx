@@ -87,15 +87,15 @@ export default function Sales() {
 
   const executeDelete = async () => {
     if (!deleteId) return;
+    const targetId = deleteId;
+    setDeleteId(null);
     try {
-      await offlineSafeDocWrite(deleteDoc(doc(db, 'sales', deleteId)));
+      await offlineSafeDocWrite(deleteDoc(doc(db, 'sales', targetId)));
       toast.success(t('common.success'), { duration: 3000 });
       fetchInitialData();
     } catch (error) {
       toast.error(t('common.error'));
       handleFirestoreError(error, OperationType.DELETE, 'sales');
-    } finally {
-      setDeleteId(null);
     }
   };
 

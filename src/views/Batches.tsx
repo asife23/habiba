@@ -190,15 +190,15 @@ export default function Batches() {
 
   const executeDelete = async () => {
     if (!deleteId) return;
+    const targetId = deleteId;
+    setDeleteId(null);
     try {
-      await offlineSafeDocWrite(deleteDoc(doc(db, 'batches', deleteId)));
+      await offlineSafeDocWrite(deleteDoc(doc(db, 'batches', targetId)));
       toast.success(t('batches.delSuccess'), { duration: 3000 });
       fetchBatches();
     } catch (error) {
       toast.error(t('batches.delError'));
       handleFirestoreError(error, OperationType.DELETE, 'batches');
-    } finally {
-      setDeleteId(null);
     }
   };
 

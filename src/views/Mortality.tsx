@@ -58,15 +58,15 @@ export default function Mortality() {
 
   const executeDelete = async () => {
     if (!deleteId) return;
+    const targetId = deleteId;
+    setDeleteId(null);
     try {
-      await offlineSafeDocWrite(deleteDoc(doc(db, 'mortality', deleteId)));
+      await offlineSafeDocWrite(deleteDoc(doc(db, 'mortality', targetId)));
       toast.success(t('common.success'), { duration: 3000 });
       fetchInitialData();
     } catch (error) {
       toast.error(t('common.error'));
       handleFirestoreError(error, OperationType.DELETE, 'mortality');
-    } finally {
-      setDeleteId(null);
     }
   };
 
