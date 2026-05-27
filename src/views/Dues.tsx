@@ -10,7 +10,7 @@ import { ConfirmModal } from '../components/ConfirmModal';
 export default function Dues() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const { currentUser } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,6 +19,7 @@ export default function Dues() {
   const [markPaidId, setMarkPaidId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   
   const [showForm, setShowForm] = useState(false);
   const [personName, setPersonName] = useState('');
@@ -62,6 +63,55 @@ export default function Dues() {
   }, [records]);
 
   const summaryKeys = Object.keys(summary).sort();
+
+  const toggleGroup = (name: string) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [name]: !prev[name]
+    }));
+  };
+
+  const groupedRecords = useMemo(() => {
+    const groups: Record<string, {
+      personName: string;
+      phone: string;
+      payable: number;
+      receivable: number;
+      items: any[];
+    }> = {};
+
+    records.forEach(r => {
+      const normalizedName = (r.personName || '').trim().replace(/\s+/g, ' ');
+      if (!normalizedName) return;
+
+      if (!groups[normalizedName]) {
+        groups[normalizedName] = {
+          personName: r.personName,
+          phone: r.phone || '',
+          payable: 0,
+          receivable: 0,
+          items: []
+        };
+      }
+
+      if (r.phone && !groups[normalizedName].phone) {
+        groups[normalizedName].phone = r.phone;
+      }
+
+      groups[normalizedName].items.push(r);
+
+      const remaining = r.amount - (r.totalPaid || 0);
+      if (remaining > 0) {
+        if (r.type === 'payable') {
+          groups[normalizedName].payable += remaining;
+        } else if (r.type === 'receivable') {
+          groups[normalizedName].receivable += remaining;
+        }
+      }
+    });
+
+    return Object.values(groups).sort((a, b) => a.personName.localeCompare(b.personName));
+  }, [records]);
 
   const fetchInitialData = async () => {
     // No-op: Data is now synced automatically by onSnapshot
@@ -307,73 +357,144 @@ export default function Dues() {
       </div>
 
       <div className="space-y-3">
-        {records.length === 0 && !loading && (
+        {groupedRecords.length === 0 && !loading && (
           <p className="text-center text-gray-500 py-8">{t('dues.dueEmpty')}</p>
         )}
-        {records.map(record => {
-          const isPayable = record.type === 'payable';
-          const totalPaid = record.totalPaid || 0;
-          const remainingDue = record.amount - totalPaid;
-          const normalizedName = (record.personName || '').trim().replace(/\s+/g, ' ');
-          const s = summary[normalizedName];
+        {groupedRecords.map(group => {
+          const isExpanded = !!expandedGroups[group.personName];
+          const hasDues = group.receivable > 0 || group.payable > 0;
+          
           return (
-            <div key={record.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm relative">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold mb-1 inline-block ${isPayable ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                    {isPayable ? t('dues.payable') : t('dues.receivable')}
-                  </span>
-                  <h3 className="font-bold text-gray-800 flex items-center gap-2 flex-wrap">
-                    {record.personName}
-                  </h3>
-                  {s && s.totalRecords > 1 && (s.receivable > 0 || s.payable > 0) && (
-                    <div className="text-[10px] bg-purple-50 text-purple-700 px-2 py-1 rounded inline-block mt-1 font-semibold border border-purple-100">
-                      {t('dues.summaryTitle').substring(0, 15)} {t('dues.personLabel').split('/')[2]}: 
-                      {s.receivable > 0 ? ` ${t('dues.totalReceivable')}${s.receivable}` : ''}
-                      {s.receivable > 0 && s.payable > 0 ? ' | ' : ''}
-                      {s.payable > 0 ? ` ${t('dues.totalPayable')}${s.payable}` : ''}
-                    </div>
+            <div key={group.personName} className="bg-white rounded-xl border border-gray-150 shadow-xs overflow-hidden transition-all duration-200">
+              {/* Main Summary Header of this Person */}
+              <div 
+                onClick={() => toggleGroup(group.personName)}
+                className="p-4 flex justify-between items-center hover:bg-slate-50/40 cursor-pointer select-none transition-colors"
+                id={`group-${group.personName.replace(/\s+/g, '-')}`}
+              >
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-slate-800 flex items-center gap-2 text-sm sm:text-base">
+                    👤 {group.personName}
+                    <span className="text-[10px] text-slate-400 font-normal font-mono">
+                      ({group.items.length} {language === 'bn' ? 'টি এন্ট্রি' : 'records'})
+                    </span>
+                  </h4>
+                  {group.phone && (
+                    <p className="text-xs text-blue-600 font-sans font-semibold">
+                      📞 {group.phone}
+                    </p>
                   )}
-                  <p className="text-xs text-gray-500 font-medium mt-1 mb-0.5">
-                    📅 {isPayable ? t('medicine.dateLabel') : t('medicine.dateLabel')}: {new Date(record.recordDate || record.createdAt).toLocaleDateString()}
-                  </p>
-                  {record.phone && <p className="text-xs text-blue-600 font-medium my-0.5">📞 <a href={`tel:${record.phone}`}>{record.phone}</a></p>}
-                  <p className="text-xs text-gray-500 text-ellipsis overflow-hidden mt-1">{record.details}</p>
+                  {/* Aggregated Totals Indicators */}
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {group.receivable > 0 ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">
+                        {language === 'bn' ? 'আমরা পাবো (পাওনা):' : 'We receive:'} ৳{group.receivable}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-400">
+                        {language === 'bn' ? 'কোনো পাওনা নেই' : 'No receivable'}
+                      </span>
+                    )}
+                    {group.payable > 0 ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-100">
+                        {language === 'bn' ? 'দোকানদার পাবে (দেনা):' : 'We owe:'} ৳{group.payable}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-400">
+                        {language === 'bn' ? 'কোনো দেনা নেই' : 'No payable'}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right flex flex-col items-end">
-                  <span className="font-bold text-gray-800 text-lg">{t('sales.totalMoney').replace(':', '')}: ৳ {record.amount}</span>
-                  <span className="text-sm font-semibold text-green-600 outline outline-1 outline-green-200 px-1 rounded">{t('dues.totalSettle')} ৳ {totalPaid}</span>
-                  <span className="font-bold text-red-600 text-md mt-1">{t('dues.remainingDue')} ৳ {remainingDue > 0 ? remainingDue : 0}</span>
-                  <button onClick={() => handleDelete(record.id)} className="text-red-500 hover:bg-red-50 p-1 rounded-md mt-2 inline-block">
-                    <Trash2 size={16} />
-                  </button>
+
+                {/* Dropdown Toggle Icon and Status Indicator */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-right hidden sm:block">
+                    <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${hasDues ? 'bg-orange-50 text-orange-605 border border-orange-200' : 'bg-green-50 text-green-750 border border-green-200'}`}>
+                      {hasDues ? (language === 'bn' ? 'বকেয়া আছে' : 'Pending') : (language === 'bn' ? 'সব পরিশোধিত' : 'Fully Paid')}
+                    </span>
+                  </div>
+                  {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
                 </div>
               </div>
-              
-              {record.payments && record.payments.length > 0 && (
-                <div className="mt-2 text-xs text-gray-500 border-t border-gray-100 pt-2 w-full text-right">
-                  <p className="font-semibold mb-1">{t('dues.historyTitle')}:</p>
-                  {record.payments.map((p: any, idx: number) => (
-                    <p key={idx}>{new Date(p.date).toLocaleDateString()}: <span className="font-semibold text-green-600">৳ {p.amount}</span></p>
-                  ))}
+
+              {/* Collapsible original transactions list */}
+              {isExpanded && (
+                <div className="bg-slate-50/50 border-t border-slate-100 p-3 space-y-3">
+                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1 px-1">
+                    {language === 'bn' ? 'এই ব্যক্তির সকল লেনদেনের বিস্তারিত তালিকা:' : 'Detailed transaction logs for this person:'}
+                  </div>
+                  {group.items.map(record => {
+                    const isPayable = record.type === 'payable';
+                    const totalPaid = record.totalPaid || 0;
+                    const remainingDue = record.amount - totalPaid;
+                    return (
+                      <div key={record.id} className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs relative space-y-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase ${isPayable ? 'bg-red-55 text-red-650 border border-red-100' : 'bg-green-55 text-green-650 border border-green-100'}`}>
+                              {isPayable ? (language === 'bn' ? 'দোকানদার পাবে (দেনা)' : 'We Owe / Payable') : (language === 'bn' ? 'আমরা পাবো (পাওনা)' : 'Receivable')}
+                            </span>
+                            <p className="text-xs text-slate-400 font-bold mt-1.5 font-sans">
+                              📅 {language === 'bn' ? 'তারিখ' : 'Date'}: {new Date(record.recordDate || record.createdAt).toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US')}
+                            </p>
+                            {record.details && (
+                              <p className="text-xs text-slate-600 font-semibold mt-1 bg-slate-50/50 p-2 rounded border border-slate-100">
+                                {record.details}
+                              </p>
+                            )}
+                          </div>
+                          
+                          <div className="text-right flex flex-col items-end">
+                            <span className="font-extrabold text-slate-800 text-sm">{language === 'bn' ? 'মোট:' : 'Total:'} ৳{record.amount}</span>
+                            <span className="text-[10px] font-semibold text-green-655 bg-green-50/50 px-1 border border-green-100/50 rounded mt-0.5">{language === 'bn' ? 'পরিশোধিত:' : 'Paid:'} ৳{totalPaid}</span>
+                            <span className="font-black text-red-600 text-xs mt-1">{language === 'bn' ? 'বকেয়া:' : 'Due:'} ৳ {remainingDue > 0 ? remainingDue : 0}</span>
+                            <button 
+                              onClick={() => handleDelete(record.id)} 
+                              className="text-red-500 hover:bg-red-50 p-1 rounded-md mt-2 transition-colors self-end"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {record.payments && record.payments.length > 0 && (
+                          <div className="text-[10px] text-slate-400 border-t border-slate-105 pt-1.5 w-full text-right font-sans">
+                            <p className="font-black underline mb-0.5">{language === 'bn' ? 'নগদ জমা প্রদানের ইতিহাস' : 'Payment Logs'}:</p>
+                            {record.payments.map((p: any, idx: number) => (
+                              <p key={idx}>{new Date(p.date).toLocaleDateString()}: <span className="font-bold text-green-600">৳{p.amount}</span></p>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-slate-100">
+                          <span className={`text-[10px] font-black ${record.status === 'paid' ? 'text-green-600' : 'text-orange-500'}`}>
+                            {record.status === 'paid' ? `✔️ ${language === 'bn' ? 'পরিশোধিত' : 'Paid'}` : (language === 'bn' ? '🔴 পেমেন্ট বাকি আছে' : 'Pending payment')}
+                          </span>
+                          {record.status === 'pending' && (
+                            <div className="flex gap-1.5">
+                              <button 
+                                disabled={isSubmitting} 
+                                onClick={() => setPaymentRecordId(record.id)} 
+                                className="flex items-center gap-1 text-[10px] bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-lg font-black hover:bg-blue-100 border border-blue-200 disabled:opacity-50 transition-all active:scale-95"
+                              >
+                                <Plus size={12} /> {language === 'bn' ? 'জমা করুন' : 'Deposit'}
+                              </button>
+                              <button 
+                                disabled={isSubmitting} 
+                                onClick={() => setMarkPaidId(record.id)} 
+                                className="flex items-center gap-1 text-[10px] bg-green-50 text-green-600 px-2.5 py-1.5 rounded-lg font-black hover:bg-green-100 border border-green-200 disabled:opacity-50 transition-all active:scale-95"
+                              >
+                                <CheckCircle size={12} /> {language === 'bn' ? 'পরিশোধিত' : 'Paid'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-
-              <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-                <span className={`text-xs font-semibold ${record.status === 'paid' ? 'text-green-600' : 'text-orange-500'}`}>
-                   {record.status === 'paid' ? `✔️ ${t('dues.statusPaid')}` : t('dues.statusPending')}
-                </span>
-                {record.status === 'pending' && (
-                  <div className="flex gap-2">
-                    <button disabled={isSubmitting} onClick={() => setPaymentRecordId(record.id)} className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-200 disabled:opacity-50">
-                      <Plus size={14} /> {t('dues.addDepositBtn')}
-                    </button>
-                    <button disabled={isSubmitting} onClick={() => setMarkPaidId(record.id)} className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-lg hover:bg-green-100 border border-green-200 disabled:opacity-50">
-                      <CheckCircle size={14} /> {t('dues.markPaidBtn')}
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           );
         })}
