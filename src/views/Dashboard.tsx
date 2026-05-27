@@ -178,7 +178,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (activeBatch && selectedType === 'poultry') {
-      setPoultryBirdsCount((activeBatch.totalChicks || 100).toString());
+      const aliveBirdsCount = Math.max(0, (activeBatch.totalChicks || 100) - totalMortality);
+      setPoultryBirdsCount(aliveBirdsCount.toString());
       const age = calculateAge(activeBatch.startDate);
       setPoultryAgeDays(age.toString());
       const nameLower = (activeBatch.batchName || '').toLowerCase();
@@ -188,7 +189,7 @@ export default function Dashboard() {
         setPoultryBreedType('broiler');
       }
     }
-  }, [activeBatch, selectedType]);
+  }, [activeBatch, selectedType, totalMortality]);
 
   useEffect(() => {
     calculateTarget();
@@ -716,6 +717,13 @@ export default function Dashboard() {
                 <div>
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">
                     👥 {language === 'bn' ? 'মুরগির সংখ্যা (পিস)' : 'Bird Count (Pcs)'}
+                    {activeBatch && totalMortality > 0 && (
+                      <span className="text-red-500 font-bold ml-1 text-[9px] normal-case bg-red-50 px-1 py-0.5 rounded border border-red-100">
+                        {language === 'bn' 
+                          ? `(মারা গেছে: ${totalMortality}টি, জীবিত: ${activeBatch.totalChicks - totalMortality}টি)` 
+                          : `(Dead: ${totalMortality}, Alive: ${activeBatch.totalChicks - totalMortality})`}
+                      </span>
+                    )}
                   </label>
                   <input
                     type="number"
